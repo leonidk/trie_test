@@ -7,10 +7,6 @@
 #include <vector> // word buffer
 #include <chrono> // timing info
 #include <random>
-#include <tuple>
-
-#include <unordered_map>
-#include <map>
 
 #include <cmath>
 
@@ -126,6 +122,8 @@ class Node {
 public:
     bool is_leaf = false;
     double offset = 0;
+    std::string uid;
+    int out_edge = 0;
 
     void set_offset() {
 #if QUASI
@@ -143,7 +141,7 @@ public:
 class FlatTrie
 {
 public:
-    std::vector<std::map<std::string, Node>> flat;
+    std::vector<Node> flat;
     Node root;
 
     FlatTrie(int size)
@@ -160,8 +158,6 @@ public:
     bool find_prefix(const std::string&);
 private:
     int find_node(const std::string&);
-    bool has_children(int curr_i, const std::string&);
-
 };
 
 void FlatTrie::add(const std::string& key)
@@ -169,35 +165,56 @@ void FlatTrie::add(const std::string& key)
     auto curr = root;
     auto asize = flat.size();
     auto ck = 0;
-    for (size_t i = 0; i < key.size(); i++) {
+    const auto keysize = key.size();
+    for (size_t i = 0; i < keysize; i++) {
         auto c = key[i];
-        ck = reduce(c + curr.ioffset(asize), asize);
         auto subkey = key.substr(0, i + 1);
-        if (flat[ck].find(subkey) == flat[ck].end()) {
-            auto new_node = Node();
-            new_node.set_offset();
-            flat[ck][subkey] = new_node;
+        size_t j = 0;
+        for (j = 0; j < asize; j++) {
+            ck = reduce(c + curr.ioffset(asize) + j, asize);
+            if (flat[ck].uid == "") {
+                flat[ck].uid = subkey;
+                flat[ck].set_offset();
+                flat[ck].out_edge = (i==keysize-1) ? 0 : 1;
+                break;
+            }
+            else if (flat[ck].uid == subkey) {
+                flat[ck].out_edge += (i==keysize-1) ? 0 : 1;
+                break;
+            }
         }
-        curr = flat[ck][subkey];
+        if (j == asize) {
+            std::cout << "ARRAY TOO SMALL!!!\n";
+            throw;
+        }
+        curr = flat[ck];
     }
-    flat[ck][key].is_leaf = true;
+    flat[ck].is_leaf = true;
 }
 
 int FlatTrie::find_node(const std::string& key)
 {
-
     auto curr = root;
     auto asize = flat.size();
     auto ck = 0;
     for (size_t i = 0; i < key.size(); i++) {
         auto c = key[i];
-        ck = reduce(c + curr.ioffset(asize), asize);
         auto subkey = key.substr(0, i + 1);
-
-        if (flat[ck].find(subkey) == flat[ck].end()) {
-            return -1;
+        size_t j = 0;
+        for (j = 0; j < asize; j++) {
+            ck = reduce(c + curr.ioffset(asize) + j, asize);
+            if (flat[ck].uid == "") {
+                return -1;
+            }
+            else if (flat[ck].uid == subkey) {
+                break;
+            }
         }
-        curr = flat[ck][subkey];
+        if (j == asize) {
+            std::cout << "ARRAY TOO SMALL!!!\n";
+            throw;
+        }
+        curr = flat[ck];
     }
     return ck;
 }
@@ -205,27 +222,13 @@ int FlatTrie::find_node(const std::string& key)
 bool FlatTrie::find(const std::string& key)
 {
     auto curr = find_node(key);
-    return curr >= 0 && flat[curr][key].is_leaf;
+    return curr >= 0 && flat[curr].is_leaf;
 }
 
 bool FlatTrie::find_prefix(const std::string& key)
 {
     auto curr = find_node(key);
-    return curr >= 0 && has_children(curr, key);
-}
-
-bool FlatTrie::has_children(int curr_i, const std::string& key)
-{
-    auto curr = flat[curr_i][key];
-    const auto asize = flat.size();
-    for (int c = 0; c < ARRAY_SIZE; c++) {
-        auto ck = reduce(c + curr.ioffset(asize), asize);
-        auto newkey = key + static_cast<char>(c);
-        if (flat[ck].find(newkey) != flat[ck].end()) {
-            return true;
-        }
-    }
-    return false;
+    return curr >= 0 && (flat[curr].out_edge > 0);
 }
 
 void FlatTrie::prune()
@@ -233,41 +236,33 @@ void FlatTrie::prune()
 
 }
 
-
 void FlatTrie::remove(const std::string& key)
 {
     auto curr = root;
     auto asize = flat.size();
     auto ck = 0;
-    std::vector<std::pair<int,std::string>> purge_list;
-    for (size_t i = 0; i < key.size(); i++) {
+    size_t i=0;
+    const auto keysize = key.size();
+    for ( i = 0; i < keysize; i++) {
         auto c = key[i];
-        ck = reduce(c + curr.ioffset(asize), asize);
         auto subkey = key.substr(0, i + 1);
-
-        if (flat[ck].find(subkey) == flat[ck].end()) {
-            break;
-        }
-        curr = flat[ck][subkey];
-        purge_list.push_back({ck,subkey});
-    }
-    for(int i =purge_list.size()-1; i >= 0; i--) {
-        auto empty = true;
-        auto start = purge_list[i];
-        auto curr = flat[start.first][start.second];
-        for(int c =0; c < ARRAY_SIZE; c++) {
-            auto newkey = start.second + static_cast<char>(c);
-
-            ck = reduce(c + curr.ioffset(asize), asize);
-            auto goal_node = flat[ck].find(newkey);
-            if (goal_node != flat[ck].end() && goal_node->second.is_leaf) {
-                empty = false;
+        size_t j = 0;
+        for (j = 0; j < asize; j++) {
+            ck = reduce(c + curr.ioffset(asize) + j, asize);
+            if (flat[ck].uid == "") {
+                i = key.size()+1;
+                break;
             }
-
+            else if (flat[ck].uid == subkey) {
+                flat[ck].out_edge -=  (i==keysize-1) ? 0 : 1;
+                break;
+            }
         }
-        if(empty) {
-            flat[start.first].erase(start.second);
-        }
+        curr = flat[ck];
+    }
+    if (i==keysize) {
+        flat[ck].is_leaf = false;
+        flat[ck].out_edge = 0;
     }
 }
 
@@ -288,7 +283,7 @@ int main(int argc, char* argv[])
         }
     }
 #ifdef USE_FLAT_TRIE
-    FlatTrie head(words.size() * 0.5);
+    FlatTrie head(words.size() * 2.8);
     std::cout << "using a flat trie with " << ((QUASI) ? "quasi-random" : "random") << std::endl;
 #else
     Trie head;
@@ -298,7 +293,7 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < 1; i++) {
         //head = {};
-        //std::shuffle(std::begin(words), std::end(words), rng);
+        std::shuffle(std::begin(words), std::end(words), rng);
 
         auto t0 = std::chrono::high_resolution_clock::now();
         for (auto& w : words) {
